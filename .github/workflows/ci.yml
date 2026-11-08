@@ -1,17 +1,20 @@
-name: Starter CI
+name: CI
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
-  prototype-and-contract-tests:
+  starter-tests:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out source
+      - name: Check out code
         uses: actions/checkout@v4
-      - name: Set up Java
+      - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -20,5 +23,5 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run Java prototype and JSON contract tests
-        run: bash scripts/check.sh
+      - name: Run starter tests
+        run: bash run-tests.sh

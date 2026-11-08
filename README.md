@@ -1,31 +1,42 @@
-# SmartCart - CS6030 (Fall 2026)
+# SmartCart
 
-Team: Rishikesh Upadhyaya, Aayush Guragain, Diego Peña Sadornil.
+**CS6030 Cloud Computing | Western Michigan University | Fall 2026**
 
-SmartCart is a planned Chrome extension and cloud application that helps compare product variants across stores. It should show Exact, Equivalent, Near-equivalent, or Different with reasons, not only a price difference.
+SmartCart is a browser extension that helps shoppers compare products across retailers. It uses model numbers and product specifications to determine whether two listings are **Exact**, **Equivalent**, **Near-equivalent**, or **Different**, and explains the result.
 
-## Current starter contents
+## Technology
 
-- `backend/prototype/`: **small Java matching proof of concept** with real assertions, not yet a Spring Boot REST API.
-- `contracts/`: sample JSON request/response for the planned API (synthetic demo data).
-- `tests/`: tests for JSON contract examples.
-- `.github/workflows/starter-ci.yml`: CI for Java proof of concept + contract fixtures.
-- `docs/`: scope, team plan, matching choices, API sketch, report PDF and editable source.
-- Empty starting directories for `extension/`, `dashboard/`, `worker/`, and `infrastructure/`.
+- **Frontend:** Chrome Extension (Manifest V3), React, TypeScript
+- **Backend:** Java, Spring Boot
+- **Database:** PostgreSQL
+- **Cloud:** Google Cloud Platform and Microsoft Azure
+- **DevOps:** Docker, GitHub Actions, Terraform
 
-## Local verification (Java 21 and Python 3)
+## Team
+
+| Member | Focus |
+| --- | --- |
+| Diego Peña Sadornil | Browser extension and frontend |
+| Aayush Guragain | Backend API and product matching |
+| Rishikesh Upadhyaya | Product data, cloud infrastructure and DevOps |
+
+## Project folders
+
+- `frontend/` — Chrome extension and React dashboard
+- `backend/` — Java matching code and Spring Boot API
+- `data/` — Sample records and product data ingestion
+- `cloud/` — Terraform and Kubernetes configuration
+- `docs/` — Team plan, API examples and midterm report
+- `tests/` — Shared tests
+
+## Run starter checks
+
+Requires **Java 21 JDK** and **Python 3**:
 
 ```bash
-bash scripts/check.sh
+bash run-tests.sh
 ```
 
-This verifies the small Java example and JSON fixtures. It does **not** verify the future Chrome extension, Spring Boot service, PostgreSQL, GKE, or Azure deployment.
+The repository includes a small Java matching example and test cases. The Spring Boot API, browser extension and cloud deployment will be developed and connected next.
 
-## Project work
-
-- Diego: Chrome MV3 extension, React UI, product-page capture, frontend integration.
-- Aayush: Spring Boot API, matching engine, logical product model, backend tests.
-- Rishikesh: limited data acquisition, database setup, GCP/Azure infrastructure, Docker, Terraform, CI/CD and monitoring.
-- Shared: integration, tests, references, report, presentation.
-
-The first release should connect a supported page to a real API and return an explained comparison. A curated catalog is acceptable for the first proof of concept if clearly identified.
+See [`docs/team-plan.md`](docs/team-plan.md) for responsibilities and [`docs/api.md`](docs/api.md) for the draft comparison API.

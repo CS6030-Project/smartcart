@@ -1,0 +1,17 @@
+{
+  "product": {
+    "retailer": "Retailer A",
+    "url": "https://example.com/product/abc",
+    "brand": "Acme",
+    "model": "REF-100",
+    "category": "refrigerator",
+    "price": 1699.0,
+    "currency": "USD",
+    "specifications": {
+      "capacityCubicFeet": 25.0,
+      "configuration": "French door",
+      "finish": "Stainless",
+      "iceMaker": true
+    }
+  }
+}

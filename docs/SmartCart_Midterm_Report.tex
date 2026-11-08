@@ -1,0 +1,122 @@
+\documentclass[conference,10pt]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{newtxtext,newtxmath}
+\usepackage{microtype}
+\usepackage{array,booktabs,cite,url,amsmath}
+\usepackage{enumitem}
+\setlist[itemize]{leftmargin=*,topsep=2pt,itemsep=0pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=*,topsep=2pt,itemsep=0pt,parsep=0pt}
+\title{SmartCart: Explainable Product Comparison Across Retailers\\\large Midterm Design and Progress Report}
+\author{\IEEEauthorblockN{Rishikesh Upadhyaya \quad Aayush Guragain \quad Diego Pe\~na Sadornil}
+\IEEEauthorblockA{Department of Computer Science, Western Michigan University\\CS6030: Cloud Computing \quad Fall 2026 \quad November 8, 2026}}
+\begin{document}
+\maketitle
+\begin{abstract}
+Shopping for appliances and electronics can be confusing because different stores use different titles, model numbers, and descriptions. Two listings may look alike but represent different product variants. SmartCart is a proposed Chrome extension that compares selected products across retailers. It aims to show whether listings are \emph{Exact}, \emph{Equivalent}, \emph{Near-equivalent}, or \emph{Different}, with simple reasons. We plan to build a Java Spring Boot backend, a PostgreSQL product catalog, a React-based browser interface, and a multi-cloud deployment using Google Cloud and Microsoft Azure. This report explains our design, key choices, risks, division of work, and current setup and prototype plan.
+\end{abstract}
+\begin{IEEEkeywords}
+product matching, browser extension, Spring Boot, PostgreSQL, multi-cloud, cloud computing
+\end{IEEEkeywords}
+
+\section{Introduction}
+A customer may find a refrigerator on one retailer's website and a similar-looking model at a lower price on another. However, the two products might differ in capacity, finish, or features. Comparing them manually takes time and can lead to mistakes. SmartCart aims to help users check what they are comparing, not simply which listing is cheaper.
+
+The extension will compare a product against a small catalog and return a label with key reasons.
+
+\section{Existing Tools and Project Focus}
+ShopSavvy already matches products across stores using barcodes, model identifiers, and titles \cite{shopsavvy}. SmartCart does not claim to be the first product comparison tool.
+
+Our focus is four-level matching with simple reasons for a small set of appliances. We will prefer structured product data when retailers provide it \cite{googlevariants}.
+
+\section{Scope and User Flow}
+The MVP targets \textbf{five selected products across five retailers}. We will start with verified refrigerator examples. Internet-wide crawling, price history, and purchase recommendations are excluded.
+
+The intended user flow is:
+\begin{enumerate}
+\item A shopper opens a supported product page.
+\item The extension collects the available model, brand, price, URL, and specifications.
+\item The backend searches a prepared catalog for likely matches.
+\item A matching process checks identifiers and product features.
+\item The extension displays the result, differences, and source information.
+\end{enumerate}
+
+The classes are: \emph{Exact} (same verified variant), \emph{Equivalent} (important features agree), \emph{Near-equivalent} (similar but differs), and \emph{Different} (not comparable). Missing evidence should not produce a confident match.
+
+\section{Proposed Architecture}
+\begin{figure}[t]
+\centering
+\setlength{\fboxsep}{4pt}
+\fbox{\parbox{0.9\columnwidth}{\centering\textbf{Chrome extension (Diego)}\\Read current product and show comparison}}\\[2pt]
+$\downarrow$ HTTPS request\\[1pt]
+\fbox{\parbox{0.9\columnwidth}{\centering\textbf{Spring Boot API and matcher (Aayush)}\\Find candidates, apply rules, explain result}}\\[2pt]
+$\updownarrow$\\[1pt]
+\fbox{\parbox{0.9\columnwidth}{\centering\textbf{PostgreSQL catalog (Rishikesh / Aayush)}\\Products, retailer listings, specifications}}\\[5pt]
+\fbox{\parbox{0.9\columnwidth}{\centering\textbf{Later catalog updates (Rishikesh)}\\Data collection $\rightarrow$ Python worker / Pub/Sub}}\\[5pt]
+\fbox{\parbox{0.9\columnwidth}{\centering\textbf{Azure Static Web Apps}\\Separate React dashboard calling the GCP API}}
+\caption{Proposed main components. Platform setup and application deployment are being implemented in stages.}
+\label{fig:design}
+\end{figure}
+
+The core API is planned for Google Kubernetes Engine (GKE). Google Cloud SQL will store products and retailer listings in PostgreSQL, with JSONB for flexible specifications. A small Python worker and Pub/Sub can later process catalog updates without delaying a customer's comparison. Google Cloud Storage can retain original source records.
+
+The Chrome extension will call the GCP API directly. A separate React dashboard on Azure Static Web Apps will call the same API to demonstrate a second cloud provider. GitHub Actions will test and deploy components, and Terraform will record the cloud setup as code. The deployment will use restricted permissions, managed secrets, and a monitoring dashboard.
+
+\section{Design Choices and Tradeoffs}
+\textbf{Browser extension versus website.} An extension helps users compare products without leaving the store page. It also requires browser permissions and separate extraction logic for different stores.
+
+\textbf{PostgreSQL versus Elasticsearch.} The MVP has a small catalog with clear links among products, variants, and offers. PostgreSQL supports these links and flexible JSONB attributes. Elasticsearch may help with searching millions of listings, but adds cost and another index to keep updated. We do not need it for the initial five-product scope.
+
+\textbf{Rules versus AI-only comparison.} A language model can compare descriptions, but may guess missing details. Our first method uses product identifiers and important features, then gives simple reasons. AI text extraction can be tested later, but it is not required to make the initial classification.
+
+\textbf{GKE versus Cloud Run.} Cloud Run would be simpler for a small service. We keep GKE in the planned design because the course covers containers and Kubernetes. This brings extra setup and cost, so cloud resources will be created only as needed.
+
+\textbf{Queue versus direct processing.} A normal comparison request should return quickly from existing product data. Background ingestion may take longer and may fail or need retries. Pub/Sub helps separate that work but adds complexity. The first prototype will use a small prepared catalog.
+
+\section{Matching and Data Plan}
+Each retailer listing will keep the retailer name, URL, source model number, price, time collected, and available specifications. We will also define normalized product and variant records. This separates a physical product from a store's offer for it.
+
+Our first rules will standardize values, check reliable identifiers, reject major conflicts, and compare features such as capacity and finish. We will test the rules with labeled examples.
+
+\section{Team Work and Current Progress}
+The three team members have divided the project into connected work areas, following our integration plan \cite{teamplan}.
+
+\begin{table}[t]
+\caption{Work Division}
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{p{0.19\columnwidth}p{0.73\columnwidth}}
+\toprule
+\textbf{Member} & \textbf{Main work} \\
+\midrule
+Diego & Chrome extension, React frontend, product-page detection, extracted fields, UI/API testing. \\
+Aayush & Spring Boot backend, REST API, matching rules, explanations, backend tests and integration. \\
+Rishikesh & Sample catalog and limited collection, database setup, Docker, GCP/Azure, Terraform, GitHub Actions and monitoring. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Work prepared for implementation.} The architecture and task plan are documented. An initial project folder layout, sample API data, a small Java comparison proof of concept, and a GitHub Actions test workflow have been prepared for the shared repository. Local starter tests cover example classification cases and JSON format checks. This is an initial code baseline, not a completed browser extension or cloud deployment. Our intended team repository is \url{https://github.com/CS6030-Project/smartcart}; the address and GitHub CI results will be confirmed after the first push.
+
+The team will work in four stages: \emph{(1)} agree on request and database fields; \emph{(2)} build the frontend, backend, and sample catalog in parallel; \emph{(3)} connect the components and deploy them; and \emph{(4)} test the complete flow, monitor the services, and prepare the final demo. This approach allows each member to start separately while keeping interfaces consistent.
+
+\section{Testing, Risks, and Next Steps}
+We will test all four matching classes, missing details, invalid input, and API failures. Later, we will test the full browser-to-cloud flow and verify CI and deployment logs.
+
+Risks include missing retailer data, false matches, page changes, and cloud costs. We will keep source details, test failures, and set budgets before paid deployment.
+
+Next we will verify GitHub CI, connect the Spring Boot API and extension, add PostgreSQL, and deploy initial versions on GCP and Azure. Terraform, monitoring, and ingestion will follow.
+
+\section{Conclusion}
+SmartCart is a practical product comparison project and a way to learn how cloud applications are designed and operated. The most important part is not just showing a lower price, but explaining whether the products are actually comparable. Our current work defines the scope, design, roles, and starting implementation checks. The next step is to connect and test the complete system.
+
+\begin{thebibliography}{00}
+\bibitem{shopsavvy} ShopSavvy, ``How ShopSavvy Works.'' [Online]. Available: \url{https://shopsavvy.com/how-shopsavvy-works}. Accessed: Nov. 7, 2026.
+\bibitem{googlevariants} Google Search Central, ``Product Variant Structured Data.'' [Online]. Available: \url{https://developers.google.com/search/docs/appearance/structured-data/product-variants/}. Accessed: Nov. 7, 2026.
+\bibitem{teamplan} SmartCart team, ``SmartCart Final Project: Team Responsibilities and Integration Plan,'' working project document, Nov. 2026.
+\bibitem{original} R. Upadhyaya and A. Guragain, ``SmartCart: Browser Extension for Product Variant Matching,'' CS6030 project proposal, Fall 2026.
+\bibitem{rubric} A. Gupta, ``Semester Team Project: Multi-Cloud Cloud-Native Application Project,'' CS6030 course handout, Fall 2026.
+\bibitem{actions} GitHub Docs, ``Workflows.'' [Online]. Available: \url{https://docs.github.com/en/actions/concepts/workflows-and-actions/workflows}. Accessed: Nov. 7, 2026.
+\end{thebibliography}
+\end{document}

@@ -1,0 +1,24 @@
+{
+  "sourceModel": "REF-100",
+  "comparisons": [
+    {
+      "candidateModel": "REF-102",
+      "retailer": "Retailer B",
+      "classification": "NEAR_EQUIVALENT",
+      "reasons": [
+        "Similar capacity",
+        "Finish differs"
+      ],
+      "evidence": {
+        "capacityCubicFeet": [
+          "25.0",
+          "25.1"
+        ],
+        "finish": [
+          "Stainless",
+          "Black"
+        ]
+      }
+    }
+  ]
+}

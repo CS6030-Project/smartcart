@@ -26,15 +26,21 @@ public final class ProductMatcher {
         boolean brandMatch = same(a.brand(), b.brand());
         boolean capacityComparable = a.capacityCubicFeet() != null && b.capacityCubicFeet() != null;
         boolean capacityClose = capacityComparable && Math.abs(a.capacityCubicFeet()-b.capacityCubicFeet()) <= 0.3;
-        boolean finishComparable = has(a.finish()) && has(b.finish());
+        boolean capacitySame = capacityComparable
+        && Double.compare(a.capacityCubicFeet(), b.capacityCubicFeet()) == 0;
+
+
+	 boolean finishComparable = has(a.finish()) && has(b.finish());
         boolean finishSame = finishComparable && same(a.finish(), b.finish());
         boolean iceComparable = a.iceMaker() != null && b.iceMaker() != null;
         boolean iceSame = iceComparable && a.iceMaker().equals(b.iceMaker());
-        if (modelMatch && brandMatch && capacityClose && finishSame && (!iceComparable || iceSame))
-            return new Result(Label.EXACT, "Same model and observed variant attributes agree");
+        if (modelMatch && brandMatch && capacitySame && finishSame
+        		&& iceComparable && iceSame
+        		&& has(a.configuration()) && has(b.configuration()))
+    		return new Result(Label.EXACT, "Same model and observed variant attributes agree");
         if (!capacityComparable || !has(a.configuration()) || !has(b.configuration()) || !iceComparable || !finishComparable)
             return new Result(Label.INSUFFICIENT_EVIDENCE, "Missing required comparison attributes");
-        if (brandMatch && capacityClose && finishSame && iceSame)
+        if (brandMatch && capacitySame && finishSame && iceSame)
             return new Result(Label.EQUIVALENT, "Different identity; key observed features are aligned");
         if (brandMatch && capacityClose)
             return new Result(Label.NEAR_EQUIVALENT, "Same category and similar capacity, but features differ");

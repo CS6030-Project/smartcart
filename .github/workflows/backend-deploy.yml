@@ -1,0 +1,45 @@
+name: Build and deploy SmartCart API
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: smartcart-backend-dev
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require merged Spring Boot backend
+        run: test -f backend/smartcart-api/pom.xml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: backend/smartcart-api/pom.xml
+      - name: Backend tests
+        run: mvn -B -f backend/smartcart-api/pom.xml test
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_APP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Configure Docker
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION || 'us-central1' }}-docker.pkg.dev" --quiet
+      - name: Build, push and release API
+        env:
+          REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT/smartcart/api:$TAG"
+          docker build -f cloud/docker/Dockerfile.backend -t "$IMAGE" .
+          docker push "$IMAGE"
+          gcloud run services update smartcart-api --image "$IMAGE" --region "$REGION" --project "$PROJECT" --quiet
+          gcloud run services describe smartcart-api --region "$REGION" --project "$PROJECT" \
+            --format='value(status.url)'

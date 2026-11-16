@@ -1,0 +1,11 @@
+# Local defaults. Cloud deployments can override source/max_records via environment.
+collector:
+  source: fixtures                 # fixtures (synthetic) | bestbuy (authorized API)
+  max_records: 25                 # 25 -> 500 without changing Python code
+  retailers: [demo-mart, demo-home, demo-tech, demo-shop, demo-market]
+  bestbuy:
+    page_size: 100
+    max_pages: 20
+    searches: [refrigerator, television, dishwasher, washer, air conditioner]
+loader:
+  max_age_hours: 48              # scheduled loads reject stale batches

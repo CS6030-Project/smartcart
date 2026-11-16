@@ -1,0 +1,15 @@
+# Build from repository root: docker build -f cloud/docker/Dockerfile.backend .
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /src
+COPY backend/smartcart-api/pom.xml ./pom.xml
+RUN mvn -B -q dependency:go-offline
+COPY backend/smartcart-api/src ./src
+RUN mvn -B -q -DskipTests package
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+RUN useradd --create-home appuser
+COPY --from=build /src/target/smartcart-api-*.jar /app/app.jar
+USER appuser
+EXPOSE 8080
+CMD ["sh", "-c", "exec java -Dserver.port=${PORT:-8080} -jar /app/app.jar"]

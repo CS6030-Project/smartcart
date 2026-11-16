@@ -1,4 +1,5 @@
 
+
 package edu.wmich.cs6030.smartcart;
 
 import org.junit.jupiter.api.Test;
@@ -67,5 +68,54 @@ class CompareControllerTest {
 	);
 	
     }
+@Test
+void shouldReturnExactMatchesBeforeEquivalentMatches() {
+    ProductRequest.Specifications specs =
+            new ProductRequest.Specifications(
+                    25.0, "French door", "Stainless", true
+            );
+
+    ProductRequest source = new ProductRequest(
+            "Retailer A", "https://example.com/source",
+            "Acme", "REF-100", "refrigerator",
+            null, "USD", specs
+    );
+
+    ProductRequest equivalent = new ProductRequest(
+            "Retailer B", "https://example.com/equivalent",
+            "Acme", "REF-200", "refrigerator",
+            null, "USD", specs
+    );
+
+    ProductRequest exact = new ProductRequest(
+            "Retailer C", "https://example.com/exact",
+            "Acme", "REF-100", "refrigerator",
+            null, "USD", specs
+    );
+
+    CandidateProductService candidateService =
+            ignored -> List.of(equivalent, exact);
+
+    CompareController controller = new CompareController(
+            new MatchingService(),
+            candidateService
+    );
+
+    CompareResponse response =
+            controller.compare(new CompareRequest(source));
+
+    assertEquals(2, response.comparisons().size());
+
+    assertEquals(
+            "EXACT",
+            response.comparisons().get(0).classification()
+    );
+
+    assertEquals(
+            "EQUIVALENT",
+            response.comparisons().get(1).classification()
+    );
+}
+
 }
 

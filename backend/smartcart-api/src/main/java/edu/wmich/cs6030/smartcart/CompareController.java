@@ -43,6 +43,20 @@ public class CompareController {
         		candidate.url()
 		));
 }
+
+        comparisons.sort(
+                java.util.Comparator.comparingInt(
+                        comparison -> switch (comparison.classification()) {
+                            case "EXACT" -> 0;
+                            case "EQUIVALENT" -> 1;
+                            case "NEAR_EQUIVALENT" -> 2;
+                            case "INSUFFICIENT_EVIDENCE" -> 3;
+                            case "DIFFERENT" -> 4;
+                            default -> 5;
+                        }
+                )
+        );
+
         return new CompareResponse(
                 request.product().model(),
                 comparisons

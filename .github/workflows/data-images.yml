@@ -1,0 +1,47 @@
+name: Publish ingestion images
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: dev
+    strategy:
+      matrix:
+        worker: [collector, loader]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_APP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Configure Docker registry auth
+        run: gcloud auth configure-docker "${{ vars.GCP_REGION || 'us-central1' }}-docker.pkg.dev" --quiet
+      - name: Build and push immutable image
+        env:
+          TAG: ${{ github.sha }}
+          WORKER: ${{ matrix.worker }}
+          REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT/smartcart/$WORKER"
+          docker build -f "data/ingestion/Dockerfile.$WORKER" -t "$IMAGE:$TAG" data/ingestion
+          docker push "$IMAGE:$TAG"
+          # bootstrap is an intentional initial provisioning pointer, not a release artifact
+          docker tag "$IMAGE:$TAG" "$IMAGE:bootstrap"
+          docker push "$IMAGE:bootstrap"
+      - name: Update job if it already exists
+        env:
+          WORKER: ${{ matrix.worker }}
+          REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+          PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          TAG: ${{ github.sha }}
+        run: |
+          if gcloud run jobs describe "smartcart-$WORKER" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1; then
+            gcloud run jobs update "smartcart-$WORKER" --project "$PROJECT" --region "$REGION" \
+              --image "$REGION-docker.pkg.dev/$PROJECT/smartcart/$WORKER:$TAG" --quiet
+          fi

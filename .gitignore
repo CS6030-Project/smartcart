@@ -5,6 +5,8 @@
 *.log
 .idea/
 .vscode/
+.venv/
+venv/
 __pycache__/
 .pytest_cache/
 *.py[cod]
@@ -20,3 +22,5 @@ target/
 *.tfstate.*
 *.tfvars
 !.tfvars.example
+*.tfplan
+*.tfplan.*

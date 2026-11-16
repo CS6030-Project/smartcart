@@ -74,7 +74,7 @@ resource "google_cloud_run_v2_job" "collector" {
       timeout         = "3600s"
       # A failed collector may have written immutable partial objects. Start a new
       # Workflow execution (new run ID) instead of retrying the same object names.
-      max_retries     = 0
+      max_retries = 0
       containers {
         name  = "collector"
         image = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.docker.repository_id}/collector:${var.job_image_tag}"

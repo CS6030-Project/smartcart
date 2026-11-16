@@ -117,5 +117,38 @@ void shouldReturnExactMatchesBeforeEquivalentMatches() {
     );
 }
 
+@Test
+void shouldHandleProductWithOnlyBrandAndModel() {
+    ProductRequest source = new ProductRequest(
+            null, null, "Samsung", "RF28R7201SR",
+            null, null, null, null
+    );
+
+    ProductRequest candidate = new ProductRequest(
+            "Best Buy", "https://example.com/candidate",
+            "Samsung", "RF28R7201SR",
+            "refrigerator", null, "USD", null
+    );
+
+    CandidateProductService candidateService =
+            ignored -> List.of(candidate);
+
+    CompareController controller = new CompareController(
+            new MatchingService(),
+            candidateService
+    );
+
+    CompareResponse response =
+            controller.compare(new CompareRequest(source));
+
+    assertEquals("RF28R7201SR", response.sourceModel());
+    assertEquals(1, response.comparisons().size());
+
+    assertEquals(
+            "INSUFFICIENT_EVIDENCE",
+            response.comparisons().get(0).classification()
+    );
+}
+
 }
 

@@ -6,19 +6,12 @@
       "retailer": "Retailer B",
       "classification": "NEAR_EQUIVALENT",
       "reasons": [
-        "Similar capacity",
-        "Finish differs"
+        "Same category and similar capacity, but features differ"
       ],
-      "evidence": {
-        "capacityCubicFeet": [
-          "25.0",
-          "25.1"
-        ],
-        "finish": [
-          "Stainless",
-          "Black"
-        ]
-      }
+      "evidence": {},
+      "price": 1599.99,
+      "currency": "USD",
+      "url": "https://example.com/product/ref-102"
     }
   ]
 }

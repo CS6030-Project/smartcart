@@ -175,7 +175,7 @@ class ProductMatcherTest {
                 ProductMatcher.compare(source, candidate);
 
         assertEquals(
-                ProductMatcher.Label.INSUFFICIENT_EVIDENCE,
+                ProductMatcher.Label.EXACT,
                 result.label()
         );
     }
@@ -206,7 +206,7 @@ class ProductMatcherTest {
                 ProductMatcher.compare(source, candidate);
 
         assertEquals(
-                ProductMatcher.Label.INSUFFICIENT_EVIDENCE,
+                ProductMatcher.Label.EXACT,
                 result.label()
         );
     }
@@ -272,4 +272,41 @@ class ProductMatcherTest {
                 result.label()
         );
     }
+
+@Test
+void sameBrandAndModelWithoutSpecificationsShouldBeExact() {
+    ProductMatcher.Product source = new ProductMatcher.Product(
+            null, "Samsung", "RF28R7201SR",
+            null, null, null, null
+    );
+
+    ProductMatcher.Product candidate = new ProductMatcher.Product(
+            null, "Samsung", "RF28R7201SR",
+            null, null, null, null
+    );
+
+    ProductMatcher.Result result =
+            ProductMatcher.compare(source, candidate);
+
+    assertEquals(ProductMatcher.Label.EXACT, result.label());
+}
+
+@Test
+void sameModelWithConflictingIceMakerShouldNotBeExact() {
+    ProductMatcher.Product source = new ProductMatcher.Product(
+            "refrigerator", "Samsung", "RF28R7201SR",
+            "French door", "Stainless", 28.0, true
+    );
+
+    ProductMatcher.Product candidate = new ProductMatcher.Product(
+            "refrigerator", "Samsung", "RF28R7201SR",
+            "French door", "Stainless", 28.0, false
+    );
+
+    ProductMatcher.Result result =
+            ProductMatcher.compare(source, candidate);
+
+    assertEquals(ProductMatcher.Label.NEAR_EQUIVALENT, result.label());
+}
+
 }

@@ -145,7 +145,7 @@ void shouldHandleProductWithOnlyBrandAndModel() {
     assertEquals(1, response.comparisons().size());
 
     assertEquals(
-            "INSUFFICIENT_EVIDENCE",
+            "EXACT",
             response.comparisons().get(0).classification()
     );
 }

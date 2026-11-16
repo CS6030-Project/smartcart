@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - 'data/ingestion/**'
-      - '.github/workflows/ingestion-ci.yml'
-      - '.github/workflows/data-images.yml'
+      - '.github/workflows/02-ci-ingestion.yml'
+      - '.github/workflows/10-cd-ingestion.yml'
   push:
     branches: [main]
     paths:
       - 'data/ingestion/**'
-      - '.github/workflows/ingestion-ci.yml'
+      - '.github/workflows/02-ci-ingestion.yml'
   workflow_dispatch:
 
 permissions:

@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'data/ingestion/**'
-      - '.github/workflows/data-images.yml'
+      - '.github/workflows/10-cd-ingestion.yml'
   workflow_dispatch:
 
 permissions:

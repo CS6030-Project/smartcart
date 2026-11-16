@@ -42,12 +42,12 @@ variable "public_api" {
   default     = false
 }
 variable "source_mode" {
-  description = "fixtures for synthetic data; bestbuy requires approved API access and a managed secret"
+  description = "Real product extraction source (scrape)"
   type        = string
-  default     = "fixtures"
+  default     = "scrape"
   validation {
-    condition     = contains(["fixtures", "bestbuy"], var.source_mode)
-    error_message = "source_mode must be fixtures or bestbuy."
+    condition     = contains(["scrape"], var.source_mode)
+    error_message = "source_mode must be scrape."
   }
 }
 
@@ -89,4 +89,20 @@ variable "schedule_timezone" {
   description = "Cloud Scheduler time zone"
   type        = string
   default     = "America/Detroit"
+}
+
+variable "discovery_mode" {
+  description = "seeds for selected product URLs or category for bounded category discovery"
+  type        = string
+  default     = "seeds"
+  validation {
+    condition     = contains(["seeds", "category"], var.discovery_mode)
+    error_message = "discovery_mode must be seeds or category."
+  }
+}
+
+variable "retailers" {
+  description = "Optional comma-separated list of enabled retailer adapters; empty selects config defaults"
+  type        = string
+  default     = ""
 }

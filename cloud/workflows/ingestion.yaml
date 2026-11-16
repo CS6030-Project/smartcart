@@ -21,6 +21,8 @@ main:
                   env:
                     - name: RUN_ID
                       value: ${run_id}
+        connector_params:
+          timeout: 3600
         result: collect_execution
     - run_loader:
         call: googleapis.run.v2.projects.locations.jobs.run

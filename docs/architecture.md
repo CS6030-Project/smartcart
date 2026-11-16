@@ -44,7 +44,7 @@ flowchart TB
 | Cache | **No cache initially** | **Memorystore/Redis** for measured repeated lookups; beware stale price/spec data |
 | API contracts | **Versioned JSON** over HTTP | GraphQL only if multiple clients need substantially different shapes |
 | Infrastructure | **Terraform + remote GCS state** | Console/gcloud for inspection/bootstrap only; Cloud Deployment Manager not selected |
-| CI/CD | **GitHub Actions + OIDC**, manual controlled production-style releases | Cloud Build/Jenkins if stronger organizational controls or scale warrant |
+| CI/CD | **GitHub Actions + OIDC**, automated releases on relevant reviewed main changes; controlled infrastructure applies | Cloud Build/Jenkins if stronger organizational controls or scale warrant |
 | Secrets | **GCP Secret Manager** for API/database credentials | Avoid shared GitHub secrets for runtime credentials or committed key files |
 | Images | **Artifact Registry** with commit-SHA tags | External registries add identity/network dependencies |
 | Frontend | **Chrome extension + optional Azure-hosted dashboard** | GCP-only reduces cross-cloud complexity; Azure provides independent frontend hosting |
@@ -56,11 +56,11 @@ flowchart TB
 
 | Stage | Data and operational focus |
 |---|---|
-| Initial POC | 25 synthetic listings; confirm end-to-end ingestion and matching contract |
-| First real source | One authorized Best Buy adapter, up to configured count; assess model/spec completeness and API limits |
+| Initial POC | Offline parser tests plus first accepted live retailer offers; confirm batch and catalog contract |
+| First real source | Permitted, model-seeded retailer HTML sources; assess model/spec/price completeness and access restrictions |
 | Broader launch | 250–500 verified listings with meaningful cross-retailer overlap; manually label positive and hard-negative matching pairs |
 | Growth | Measure load duration, source failures, API latency, DB query plans, connection pool utilization and cost before adding queues, cache, search index or GKE |
 
 ## Current implementation limits
 
-Cloud resources are **defined but not confirmed deployed**. The initial Spring Boot branch is not yet merged or DB-integrated. One real API adapter is implemented but its live access is unverified; synthetic fixtures are not real market data. The system does not yet provide production authentication, abuse controls, multi-region availability or five authorized retailer data feeds. Cloud SQL has backups in dev but requires an explicitly tested recovery/retention strategy before production use.
+Cloud resources are defined in Terraform and can be inspected through GCP and the deployment workflow. The Spring Boot service requires its own completed branch merge and database integration. The collection layer has HTTP/JSON-LD retailer adapters, but live site access and field completeness must be checked in each environment. Offline HTML tests are not live retail data. The system does not yet provide production authentication, abuse controls, multi-region availability or five authorized retailer data feeds. Cloud SQL has backups in dev but requires a tested recovery/retention strategy before production use.

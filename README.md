@@ -1,58 +1,82 @@
 # SmartCart
 
-Explainable cross-retailer product matching. SmartCart identifies product variants using manufacturer identifiers and category-specific specifications, then explains **Exact**, **Equivalent**, **Near-equivalent**, **Different**, or **Insufficient evidence** results.
+SmartCart is an explainable cross-retailer product comparison system. It distinguishes identical manufacturer variants from similar models and compares retailer offers with provenance and freshness information.
 
-**Stack:** Chrome extension · React · Java 21/Spring Boot · Python 3.12 · PostgreSQL 16 · Google Cloud Run/Cloud SQL/Storage · Azure Static Web Apps · Terraform · GitHub Actions.
+**Initial categories:** televisions and dishwashers. **Deployment:** Google Cloud Run, Cloud SQL for PostgreSQL 16, Cloud Storage, Workflows and Secret Manager. **Clients:** Chrome extension and optional React dashboard. **Matching API:** Java 21 / Spring Boot. **Ingestion:** Python 3.12.
 
-## System
+## Architecture
 
 ```mermaid
 flowchart LR
-  EXT[Chrome extension] --> API[Spring Boot API / Cloud Run]
-  DASH[React dashboard / Azure] --> API
-  API --> DB[(Cloud SQL PostgreSQL)]
-  SCHED[Scheduler] --> WF[Workflows]
-  WF --> COL[Python collector job]
-  COL --> RAW[(GCS raw JSONL batches)]
-  RAW --> LOAD[Python loader job]
-  WF --> LOAD
-  LOAD --> DB
+  Browser[Chrome extension] --> API[Spring Boot / Cloud Run]
+  API --> PG[(PostgreSQL catalog)]
+  Scheduler[Cloud Scheduler] --> WF[Workflows]
+  WF --> COL[Cloud Run collector]
+  COL --> GCS[(GCS raw JSONL + manifests)]
+  WF --> LOAD[Cloud Run loader]
+  GCS --> LOAD
+  LOAD --> PG
+  GHA[GitHub Actions] --> REG[Artifact Registry]
+  REG -.-> API
+  REG -.-> COL
+  REG -.-> LOAD
 ```
 
-| Directory | Purpose |
+The collector reads product pages using a common HTTP/HTML engine and small retailer adapters. The loader validates manifests and source records, identifies canonical manufacturer models, and upserts retailer offers. It does not invent unavailable prices or force ambiguous matches.
+
+## Repository guide
+
+| Location | Responsibility |
 |---|---|
-| `frontend/extension`, `frontend/dashboard` | Browser UI and optional dashboard |
-| `backend/smartcart-api` | Spring Boot REST API, matching rules and tests (see active backend branch) |
-| `data/ingestion` | Python collection, raw-batch validation, normalization, SQL and tests |
-| `cloud/terraform/dev` | GCP resources; deployment managed via GitHub Actions |
-| `cloud/bootstrap`, `cloud/workflows` | One-time cloud bootstrap and batch orchestration |
-| `.github/workflows` | Automated tests and controlled image/infrastructure deployments |
-| `docs/architecture.md`, `docs/data-contract.md` | Architecture decisions and backend data contract |
+| `data/ingestion/collector/scraping/` | HTTP, discovery, retailer URL adapters and JSON-LD/HTML extraction |
+| `data/ingestion/config.yaml` | Retailer URLs, collection categories, discovery and HTTP limits |
+| `data/ingestion/common/` | Source-neutral configuration and record validation |
+| `data/ingestion/loader/`, `data/ingestion/sql/` | GCS/local manifest verification and PostgreSQL migrations |
+| `backend/smartcart-api/` | Spring Boot API, matching and candidate retrieval (maintained separately) |
+| `frontend/extension/` | Current-page identification and comparison interface |
+| `cloud/terraform/dev/` | Version-controlled GCP resource configuration |
+| `.github/workflows/` | Named CI, CD and operations workflows |
+| `docs/` | Architecture, data contract, scraping and delivery runbooks |
 
 ## Local development
 
-**Ingestion (no cloud account or database required for dry runs):**
+Python 3.12 and dependencies:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r data/ingestion/requirements.txt
+pip install -r data/ingestion/requirements.txt
 cd data/ingestion
 python -m unittest discover -s tests -v
-python -m collector.main --source fixtures --run-id local-001 --output-dir /tmp/smartcart
-python -m loader.main --manifest-uri /tmp/smartcart/manifests/local-001.json --dry-run
 ```
 
-For a larger synthetic run, use `--max-records 500` and a fresh `--run-id`. The default is 25. `data/ingestion/config.yaml` defines local defaults; environment variables and CLI flags override appropriate settings in cloud/jobs. Synthetic retailer domains end in `.example` and are **not actual listings**.
+Run the same real-product collector used in Cloud Run, with a small limit and local output:
 
-**Database:** `compose.yaml` starts PostgreSQL 16; provide a local `.env` based on `.env.example`. Set `DB_HOST`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`, then omit `--dry-run` to load a batch. Repeating a run is idempotent. Keep passwords out of Git.
+```bash
+python -m collector.main --source scrape --retailers abt,homedepot \
+  --max-records 3 --output-dir /tmp/smartcart-raw
+```
 
-**Backend:** the Spring Boot project lives in `backend/smartcart-api` on `feature/aayush-backend`; once merged, build/test using `mvn -f backend/smartcart-api/pom.xml test`. Current candidate retrieval is not yet connected to the catalog. The extension is still under development.
+The collector prints a manifest URI on success. If all sites decline requests or product identification fails, it exits with an error rather than producing placeholder offers. Run an offline end-to-end validation without external HTTP calls using the maintained test support:
 
-## Sources and scope
+```bash
+python -m tests.create_offline_batch --output-dir /tmp/smartcart-ci
+python -m loader.main --manifest-uri /tmp/smartcart-ci/manifests/ci-offline-batch.json --dry-run
+```
 
-- **Fixtures:** 25 listings from five *fictional* retailers for repeatable tests; 500 through configuration for scale/replay tests.
-- **Best Buy:** one optional real Products API adapter; requires authorized API access and `BESTBUY_API_KEY` (provided via GCP Secret Manager in deployed jobs). Actual returned count and usable variant specs depend on the API.
-- **Additional retailers:** separate authorized adapters are required before claiming five-retailer live coverage. Do not bypass website access controls.
+For local PostgreSQL, set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, then omit `--dry-run`. Do not use the live Cloud SQL credentials on a laptop.
 
-See [architecture and trade-offs](docs/architecture.md) and [database/API contract](docs/data-contract.md). CI tests are a prerequisite to merging; successful code validation does not by itself prove a cloud deployment is live.
+## Cloud delivery
+
+- **CI:** Pull requests run repository, ingestion and Terraform checks as applicable.
+- **Continuous deployment:** A merge into `main` affecting ingestion code triggers ingestion tests, publishes collector/loader images with immutable commit tags, then updates existing Cloud Run Jobs. Backend code merges similarly test, build and deploy the Spring Boot service.
+- **Infrastructure:** Terraform apply remains manually approved and uses shared GCS state. Schema migrations run transactionally with the loader; database password remains in GCP Secret Manager.
+- **Ingestion execution:** Cloud Workflows is separate from code deployment. Cloud Scheduler remains paused until data collection is validated.
+
+See [CI/CD](docs/ci-cd.md), [scraping operations](docs/scraping.md), [data contract](docs/data-contract.md), and [deployment](docs/deployment-runbook.md).
+
+## Current operational boundaries
+
+Scraping supported product pages is best-effort. Pages can change, require rendering, restrict access or lack trustworthy price/model data. Respect source restrictions and do not bypass access controls. The offline test pages prove extraction behavior but are not evidence of current live retailer prices. Before enabling scheduled collection, validate retailer permission, acceptable request volume, metadata accuracy, retention and price freshness.
+
+The Spring Boot backend and extension are developed in separate workstreams. The presence of a `smartcart-api` Cloud Run service does not by itself establish that the merged Java application is connected to PostgreSQL.

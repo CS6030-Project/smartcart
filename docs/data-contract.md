@@ -1,34 +1,48 @@
-# Product data and API contract
+# Catalog and product-offer contract
 
-## Persistent catalog (PostgreSQL 16)
+The PostgreSQL catalog preserves two separate concepts: **manufacturer product variants** and **retailer listings**. A retailer URL or SKU cannot serve as the canonical product identity across merchants.
 
-`data/ingestion/sql/001_catalog.sql` is the initial schema, created idempotently by the Python loader. Changes after adoption should be versioned migrations.
+## Tables
 
-| Table | Key fields / purpose |
+| Entity | Primary role |
 |---|---|
-| `catalog.ingestion_runs` | `run_id` PK, `manifest_uri`, `source`, `collected_at`, accepted/rejected counts |
-| `catalog.retailer_listings` | `id`, unique `source_url`, `retailer`, `source_listing_id`, `brand`, `model`, `category`, `price_usd`, `currency`, `specifications JSONB`, `raw_object_uri`, `collected_at`, `last_run_id` |
+| `catalog.product_variants` | Canonical category, brand, exact manufacturer model; normalized brand/model keys, unique within category |
+| `catalog.retailer_listings` | One current listing per canonical retailer `source_url`, with variant reference and offer data |
+| `catalog.ingestion_runs` | Immutable run identity, manifest reference, source, accepted/rejected counts |
 
-Indexes support candidate search by `lower(brand)`, `lower(model)` and category; GIN supports JSONB queries. `source_url` is an initial listing key; a later canonical SKU/retailer key can be introduced after source validation. Do not equate a retailer listing with a globally verified manufacturer variant.
+The loader executes `sql/001_catalog.sql` and then `sql/002_real_catalog.sql` in its PostgreSQL transaction. Both migrations are idempotent. The second migration adds `variant_id`, `gtin`, `seller`, `product_condition`, `availability` and `extraction_method` without breaking existing listing identifiers.
+
+Raw collector records contain `retailer`, `source_url`, `source_listing_id`, `brand`, `model`, `category`, `title`, optional `price`, `currency`, `gtin`, `condition`, `seller`, `availability`, `specifications`, `source_type=scrape`, `collected_at` and `extraction_method`. The loader rejects inconsistent category/currency/model fields and preserves missing price as NULL.
+
+A completed gzip JSONL manifest includes version, run ID, source, collected time, record count, SHA-256 per file and collection diagnostics. The loader reads only the exact completed manifest, verifies counts and hashes, rejects stale batches unless explicitly replayed, and upserts with a newer-data-wins condition. A successful real ingestion removes prior synthetic listings from the live table.
+
+## Useful queries
+
+Same manufacturer model sold at multiple stores:
 
 ```sql
-SELECT retailer, source_url, brand, model, price_usd, specifications
-FROM catalog.retailer_listings
-WHERE category = 'refrigerator'
-  AND lower(brand) = lower('Acme')
-  AND lower(model) = lower('ACME-RF-001');
+SELECT v.brand, v.manufacturer_model, v.category, count(DISTINCT l.retailer) AS stores
+FROM catalog.product_variants AS v
+JOIN catalog.retailer_listings AS l ON l.variant_id = v.id
+WHERE l.source_type = 'scrape'
+GROUP BY v.id, v.brand, v.manufacturer_model, v.category
+HAVING count(DISTINCT l.retailer) >= 2
+ORDER BY stores DESC, v.brand, v.manufacturer_model;
 ```
 
-## Loader guarantees
+Compare current stored offers of one exact TV model:
 
-- Completed batch manifest required; checks SHA-256 and record counts; scheduled ingestion rejects stale manifests.
-- `source_type='synthetic'` is retained so test rows cannot be mistaken for retailer data.
-- Repeated loads UPSERT the same `source_url`; older observations cannot overwrite a newer listing.
-- Unknown specifications stay missing; model suffixes are preserved. Only USD price values are currently supported; other currencies require conversion before ingestion.
-- Every normalized listing retains its raw batch URI and collection timestamp. Rejected records are counted and surfaced by the loader; raw evidence stays in GCS until its lifecycle expiration.
+```sql
+SELECT retailer, source_listing_id, price_usd, product_condition,
+       availability, collected_at, source_url
+FROM catalog.retailer_listings
+WHERE lower(brand) = 'lg' AND upper(model) = 'OLED55C6PUA'
+  AND source_type = 'scrape'
+ORDER BY price_usd NULLS LAST, collected_at DESC;
+```
+
+The query above displays observed prices, not necessarily fresh/current prices. For consumer-facing API responses, filter by a source-approved freshness interval, seller and condition; missing prices or ambiguous variants must not yield verified price savings.
 
 ## Backend integration
 
-Aayush's API currently uses `POST /api/v1/compare` with `ProductRequest` and `CompareResponse` records. Candidate retrieval should replace the empty `DefaultCandidateProductService` with a PostgreSQL repository and map DB `specifications` keys such as `capacityCubicFeet`, `configuration`, `finish`, `iceMaker` into Java fields. Category-aware rules can extend the JSONB shape without forcing unrelated columns onto all products.
-
-For Cloud SQL on Cloud Run, Java needs a supported Cloud SQL PostgreSQL JDBC connector/socket factory if using the configured `jdbc:postgresql:///smartcart?cloudSqlInstance=...&socketFactory=...` URL; this dependency and disabling the current JDBC auto-configuration exclusion remain backend tasks. The API runtime identity receives `cloudsql.client` and `secretmanager.secretAccessor` grants. Enable Terraform's `enable_api_database` only after that wiring and DB credentials are ready.
+The Spring Boot API should retrieve candidates by brand/model/category (or `variant_id` after canonical matching) and return evidence and offer age. Existing Java request/response types remain owned by the backend workstream; this migration doesn't automatically create database access within the Spring Boot app. Cloud Run's `ENABLE_API_DATABASE` should remain false until JDBC wiring and the Cloud SQL socket factory are deployed and tested.

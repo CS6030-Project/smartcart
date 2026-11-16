@@ -1,7 +1,11 @@
-name: Terraform CI
+name: "03 · CI / Terraform"
 on:
   pull_request:
-    paths: ["cloud/terraform/**", "cloud/workflows/**", ".github/workflows/terraform-*.yml"]
+    paths:
+      - "cloud/terraform/**"
+      - "cloud/workflows/**"
+      - ".github/workflows/03-ci-terraform.yml"
+      - ".github/workflows/20-ops-terraform.yml"
   workflow_dispatch:
 permissions:
   contents: read

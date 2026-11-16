@@ -71,7 +71,7 @@ resource "google_cloud_run_v2_job" "collector" {
     parallelism = 1
     template {
       service_account = google_service_account.collector.email
-      timeout         = "900s"
+      timeout         = "3600s"
       # A failed collector may have written immutable partial objects. Start a new
       # Workflow execution (new run ID) instead of retrying the same object names.
       max_retries = 0
@@ -90,17 +90,13 @@ resource "google_cloud_run_v2_job" "collector" {
           name  = "MAX_RECORDS"
           value = tostring(var.max_records)
         }
-        dynamic "env" {
-          for_each = var.source_mode == "bestbuy" ? [1] : []
-          content {
-            name = "BESTBUY_API_KEY"
-            value_source {
-              secret_key_ref {
-                secret  = google_secret_manager_secret.bestbuy_api_key.secret_id
-                version = "latest"
-              }
-            }
-          }
+        env {
+          name  = "DISCOVERY_MODE"
+          value = var.discovery_mode
+        }
+        env {
+          name  = "RETAILERS"
+          value = var.retailers
         }
         resources { limits = { cpu = "1", memory = "512Mi" } }
       }

@@ -78,7 +78,8 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
     import psycopg
     from psycopg.types.json import Jsonb
     from pathlib import Path as PathType
-    sql = (PathType(__file__).resolve().parent.parent / 'sql' / '001_catalog.sql').read_text()
+    sql_dir = PathType(__file__).resolve().parent.parent / "sql"
+    migrations = [(sql_dir / filename).read_text() for filename in ("001_catalog.sql", "002_real_catalog.sql")]
     # Host may be /cloudsql/PROJECT:REGION:INSTANCE (Cloud SQL Unix socket) or localhost.
     with psycopg.connect(
         host=os.getenv('DB_HOST', '127.0.0.1'),
@@ -88,7 +89,8 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
         password=os.getenv('DB_PASSWORD', ''),
     ) as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            for migration in migrations:
+                cur.execute(migration)
             cur.execute('''INSERT INTO catalog.ingestion_runs
               (run_id, manifest_uri, source, source_type, collected_at, accepted_count, rejected_count)
               VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -97,24 +99,44 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
               rejected_count=EXCLUDED.rejected_count''',
               (manifest['run_id'], manifest_uri, manifest['source'], manifest['source_type'],
                collected, len(normalized), len(rejections)))
-            for r in normalized:
-                cur.execute('''INSERT INTO catalog.retailer_listings
-                  (retailer,source_url,source_listing_id,brand,model,category,title,
-                   price_usd,currency,specifications,source_type,raw_object_uri,collected_at,last_run_id)
-                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                  ON CONFLICT(source_url) DO UPDATE SET
-                   source_listing_id=EXCLUDED.source_listing_id,
-                   brand=EXCLUDED.brand,model=EXCLUDED.model,category=EXCLUDED.category,
-                   title=EXCLUDED.title,price_usd=EXCLUDED.price_usd,
-                   currency=EXCLUDED.currency,specifications=EXCLUDED.specifications,
-                   source_type=EXCLUDED.source_type,raw_object_uri=EXCLUDED.raw_object_uri,
-                   collected_at=EXCLUDED.collected_at,last_run_id=EXCLUDED.last_run_id,
-                   updated_at=now()
-                  WHERE catalog.retailer_listings.collected_at <= EXCLUDED.collected_at''',
-                  (r['retailer'], r['source_url'], r['source_listing_id'], r['brand'],
-                   r['model'], r['category'], r['title'], r['price_usd'],
-                   r['currency'], Jsonb(r['specifications']), r['source_type'],
-                   r['raw_object_uri'], r['collected_at'], manifest['run_id']))
+            variant_rows = [(r['brand'], r['brand_key'], r['model'],
+                             r['model_key'], r['category']) for r in normalized]
+            cur.executemany('''INSERT INTO catalog.product_variants
+                (brand,brand_key,manufacturer_model,model_key,category)
+                VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (brand_key,model_key,category) DO UPDATE SET
+                  updated_at=now()''', variant_rows)
+            listing_sql = '''INSERT INTO catalog.retailer_listings
+              (retailer,source_url,source_listing_id,brand,model,category,title,
+               price_usd,currency,specifications,source_type,raw_object_uri,collected_at,last_run_id,
+               variant_id,gtin,seller,product_condition,availability,extraction_method)
+              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                (SELECT id FROM catalog.product_variants WHERE brand_key=%s AND model_key=%s AND category=%s),
+                %s,%s,%s,%s,%s)
+              ON CONFLICT(source_url) DO UPDATE SET
+               source_listing_id=EXCLUDED.source_listing_id,
+               brand=EXCLUDED.brand,model=EXCLUDED.model,category=EXCLUDED.category,
+               title=EXCLUDED.title,price_usd=EXCLUDED.price_usd,
+               currency=EXCLUDED.currency,specifications=EXCLUDED.specifications,
+               source_type=EXCLUDED.source_type,raw_object_uri=EXCLUDED.raw_object_uri,
+               collected_at=EXCLUDED.collected_at,last_run_id=EXCLUDED.last_run_id,
+               variant_id=EXCLUDED.variant_id,gtin=EXCLUDED.gtin,seller=EXCLUDED.seller,
+               product_condition=EXCLUDED.product_condition,availability=EXCLUDED.availability,
+               extraction_method=EXCLUDED.extraction_method,updated_at=now()
+              WHERE catalog.retailer_listings.collected_at <= EXCLUDED.collected_at'''
+            params = [
+                (r['retailer'],r['source_url'],r['source_listing_id'],r['brand'],r['model'],
+                 r['category'],r['title'],r['price_usd'],r['currency'],Jsonb(r['specifications']),
+                 r['source_type'],r['raw_object_uri'],r['collected_at'],manifest['run_id'],
+                 r['brand_key'],r['model_key'],r['category'],
+                 r['gtin'],r['seller'],r['condition'],r['availability'],r['extraction_method'])
+                for r in normalized
+            ]
+            cur.executemany(listing_sql, params)
+            # A successful real ingestion replaces demo records in the live catalog;
+            # no destructive cleanup takes place on failed/zero-record collection.
+            if manifest['source_type'] == 'scrape' and normalized:
+                cur.execute("DELETE FROM catalog.retailer_listings WHERE source_type='synthetic'")
     return report
 
 

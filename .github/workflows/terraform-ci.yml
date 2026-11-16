@@ -1,4 +1,4 @@
-name: Terraform CI
+name: "03 · CI / Terraform"
 on:
   pull_request:
     paths: ["cloud/terraform/**", "cloud/workflows/**", ".github/workflows/terraform-*.yml"]

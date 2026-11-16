@@ -1,15 +1,83 @@
-name: Publish ingestion images
+name: "10 · CD / Ingestion workers"
+
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'data/ingestion/**'
+      - '.github/workflows/data-images.yml'
   workflow_dispatch:
+
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: smartcart-ingestion-deploy-dev
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    name: Verify collection and database contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: smartcart
+          POSTGRES_USER: smartcart
+          POSTGRES_PASSWORD: integration-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U smartcart -d smartcart"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: smartcart
+      DB_USER: smartcart
+      DB_PASSWORD: integration-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install ingestion dependencies
+        run: python -m pip install -r data/ingestion/requirements.txt
+      - name: Offline extractor and pipeline unit tests
+        working-directory: data/ingestion
+        run: python -m unittest discover -s tests -v
+      - name: Offline product pages through production collector
+        working-directory: data/ingestion
+        run: |
+          python -m tests.create_offline_batch --output-dir /tmp/smartcart-ci
+          python -m loader.main --manifest-uri /tmp/smartcart-ci/manifests/ci-offline-batch.json --dry-run
+      - name: PostgreSQL migration, load and idempotent replay
+        working-directory: data/ingestion
+        run: |
+          python -m loader.main --manifest-uri /tmp/smartcart-ci/manifests/ci-offline-batch.json
+          python -m loader.main --manifest-uri /tmp/smartcart-ci/manifests/ci-offline-batch.json
+          python - <<'PY'
+          import os
+          import psycopg
+          with psycopg.connect(host=os.environ['DB_HOST'], dbname=os.environ['DB_NAME'],
+                               user=os.environ['DB_USER'], password=os.environ['DB_PASSWORD']) as conn:
+              offers = conn.execute('SELECT count(*) FROM catalog.retailer_listings').fetchone()[0]
+              variants = conn.execute('SELECT count(*) FROM catalog.product_variants').fetchone()[0]
+              assert (offers, variants) == (3, 1), (offers, variants)
+              print('PostgreSQL replay passed: 3 retailer offers, 1 canonical variant')
+          PY
+
   publish:
+    name: Build and publish ${{ matrix.worker }}
+    needs: validate
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: dev
     strategy:
+      fail-fast: false
       matrix:
         worker: [collector, loader]
     steps:
@@ -19,22 +87,21 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_APP_DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@v3
-      - name: Configure Docker registry auth
+      - name: Configure Artifact Registry authentication
         run: gcloud auth configure-docker "${{ vars.GCP_REGION || 'us-central1' }}-docker.pkg.dev" --quiet
-      - name: Build and push immutable image
+      - name: Build and publish versioned image
         env:
-          TAG: ${{ github.sha }}
           WORKER: ${{ matrix.worker }}
           REGION: ${{ vars.GCP_REGION || 'us-central1' }}
           PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          TAG: ${{ github.sha }}
         run: |
           IMAGE="$REGION-docker.pkg.dev/$PROJECT/smartcart/$WORKER"
           docker build -f "data/ingestion/Dockerfile.$WORKER" -t "$IMAGE:$TAG" data/ingestion
           docker push "$IMAGE:$TAG"
-          # bootstrap is an intentional initial provisioning pointer, not a release artifact
           docker tag "$IMAGE:$TAG" "$IMAGE:bootstrap"
           docker push "$IMAGE:bootstrap"
-      - name: Update job if it already exists
+      - name: Release existing Cloud Run Job
         env:
           WORKER: ${{ matrix.worker }}
           REGION: ${{ vars.GCP_REGION || 'us-central1' }}
@@ -44,4 +111,6 @@ jobs:
           if gcloud run jobs describe "smartcart-$WORKER" --project "$PROJECT" --region "$REGION" >/dev/null 2>&1; then
             gcloud run jobs update "smartcart-$WORKER" --project "$PROJECT" --region "$REGION" \
               --image "$REGION-docker.pkg.dev/$PROJECT/smartcart/$WORKER:$TAG" --quiet
+          else
+            echo "Job smartcart-$WORKER not yet provisioned; image is ready for Terraform."
           fi

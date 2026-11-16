@@ -9,11 +9,14 @@ public record CompareResponse(
         List<Comparison> comparisons
 ) {
     public record Comparison(
-            String candidateModel,
-            String retailer,
-            String classification,
-            List<String> reasons,
-            Map<String, List<String>> evidence
-    ) {}
+        String candidateModel,
+        String retailer,
+        String classification,
+        List<String> reasons,
+        Map<String, List<String>> evidence,
+        java.math.BigDecimal price,
+        String currency,
+        String url
+) {}
 }
 

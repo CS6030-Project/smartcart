@@ -50,6 +50,22 @@ class CompareControllerTest {
                 "Retailer B",
                 response.comparisons().get(0).retailer()
         );
+	
+	assertEquals(
+        	"USD",
+        	response.comparisons().get(0).currency()
+	);
+
+	assertEquals(
+        	"https://example.com/candidate",
+        	response.comparisons().get(0).url()
+	);
+
+	assertEquals(
+        	null,
+        	response.comparisons().get(0).price()
+	);
+	
     }
 }
 

@@ -37,7 +37,10 @@ public class CompareController {
         		candidate.retailer(),
         		result.label().name(),
         		List.of(result.explanation()),
-        		java.util.Map.of()
+        		java.util.Map.of(),
+        		candidate.price(),
+        		candidate.currency(),
+        		candidate.url()
 		));
 }
         return new CompareResponse(

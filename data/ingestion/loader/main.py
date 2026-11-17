@@ -4,12 +4,16 @@ import argparse
 import gzip
 import hashlib
 import json
+import logging
+import re
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from common.records import normalize_listing
 from common.config import load_config, positive_int
+
+LOG = logging.getLogger(__name__)
 
 
 def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = False,
@@ -25,9 +29,9 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
         origin = f'gs://{bucket_name}/'
     else:
         manifest_path = Path(manifest_uri).resolve()
-        # Collector writes local manifests in <root>/manifests/<run>.json.
-        root = manifest_path.parent.parent
         manifest = json.loads(manifest_path.read_text())
+        # Default root/manifests; isolated root/<namespace>/manifests also supported.
+        root = manifest_path.parent.parent.parent if manifest.get('namespace') else manifest_path.parent.parent
         read_bytes = lambda name: (root / name).read_bytes()
         origin = str(root) + '/'
 
@@ -35,6 +39,18 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
         raise ValueError('not a supported completed batch')
     if not manifest.get('files') or not manifest.get('run_id'):
         raise ValueError('manifest is incomplete')
+    namespace = manifest.get('namespace')
+    if namespace and not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,39}', namespace):
+        raise ValueError('invalid manifest namespace')
+    expected_manifest = (f'{namespace}/' if namespace else '') + f'manifests/{manifest["run_id"]}.json'
+    if manifest_uri.startswith('gs://'):
+        if manifest_path != expected_manifest:
+            raise ValueError('manifest URI does not match run ID and namespace')
+    elif Path(manifest_uri).resolve().as_posix().endswith('/' + expected_manifest) is False:
+        raise ValueError('local manifest path does not match run ID and namespace')
+    raw_prefix = (f'{namespace}/' if namespace else '') + 'raw/'
+    LOG.info('loading run_id=%s source=%s namespace=%s dry_run=%s',
+             manifest['run_id'], manifest.get('source'), namespace or 'default', dry_run)
     collected = datetime.fromisoformat(manifest['collected_at'].replace('Z', '+00:00'))
     if collected.tzinfo is None:
         raise ValueError('manifest missing timezone')
@@ -48,7 +64,7 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
     total = 0
     for item in manifest['files']:
         name = item['path']
-        if name in seen_paths or not name.startswith('raw/') or '..' in Path(name).parts:
+        if name in seen_paths or not name.startswith(raw_prefix) or '..' in Path(name).parts:
             raise ValueError('invalid or duplicate raw object path')
         seen_paths.add(name)
         data = read_bytes(name)
@@ -65,13 +81,17 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
                 normalized.append(record)
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 rejections.append(f'{name}:{number}: {exc}')
+                LOG.warning('loader rejected record file=%s row=%d reason=%s', name, number, exc)
     if total != manifest['record_count']:
         raise ValueError('manifest total record count mismatch')
     if not normalized:
         raise ValueError('batch has zero valid records; refusing to load')
     report = {'run_id': manifest['run_id'], 'source': manifest['source'],
               'accepted': len(normalized), 'rejected': len(rejections),
-              'errors': rejections[:10], 'dry_run': dry_run}
+              'errors': rejections[:10], 'dry_run': dry_run,
+              'retailers': manifest.get('diagnostics', {}).get('retailers', {})}
+    LOG.info('batch verified run_id=%s raw=%s accepted=%s rejected=%s',
+             manifest['run_id'], total, len(normalized), len(rejections))
     if dry_run:
         return report
 
@@ -79,7 +99,8 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
     from psycopg.types.json import Jsonb
     from pathlib import Path as PathType
     sql_dir = PathType(__file__).resolve().parent.parent / "sql"
-    migrations = [(sql_dir / filename).read_text() for filename in ("001_catalog.sql", "002_real_catalog.sql")]
+    migrations = [(sql_dir / filename).read_text() for filename in
+                  ("001_catalog.sql", "002_real_catalog.sql", "003_api_contract.sql")]
     # Host may be /cloudsql/PROJECT:REGION:INSTANCE (Cloud SQL Unix socket) or localhost.
     with psycopg.connect(
         host=os.getenv('DB_HOST', '127.0.0.1'),
@@ -88,17 +109,19 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
         user=os.getenv('DB_USER', 'smartcart'),
         password=os.getenv('DB_PASSWORD', ''),
     ) as conn:
+        LOG.info('connected to PostgreSQL db=%s; applying idempotent migrations',
+                 os.getenv('DB_NAME', 'smartcart'))
         with conn.cursor() as cur:
             for migration in migrations:
                 cur.execute(migration)
             cur.execute('''INSERT INTO catalog.ingestion_runs
-              (run_id, manifest_uri, source, source_type, collected_at, accepted_count, rejected_count)
-              VALUES (%s,%s,%s,%s,%s,%s,%s)
+              (run_id, manifest_uri, source, source_type, collected_at, accepted_count, rejected_count, diagnostics)
+              VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
               ON CONFLICT(run_id) DO UPDATE SET
               finished_at=now(), accepted_count=EXCLUDED.accepted_count,
-              rejected_count=EXCLUDED.rejected_count''',
+              rejected_count=EXCLUDED.rejected_count, diagnostics=EXCLUDED.diagnostics''',
               (manifest['run_id'], manifest_uri, manifest['source'], manifest['source_type'],
-               collected, len(normalized), len(rejections)))
+               collected, len(normalized), len(rejections), Jsonb(manifest.get('diagnostics') or {})))
             variant_rows = [(r['brand'], r['brand_key'], r['model'],
                              r['model_key'], r['category']) for r in normalized]
             cur.executemany('''INSERT INTO catalog.product_variants
@@ -107,16 +130,16 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
                 ON CONFLICT (brand_key,model_key,category) DO UPDATE SET
                   updated_at=now()''', variant_rows)
             listing_sql = '''INSERT INTO catalog.retailer_listings
-              (retailer,source_url,source_listing_id,brand,model,category,title,
+              (retailer,source_url,source_listing_id,brand,model,category,title,description,
                price_usd,currency,specifications,source_type,raw_object_uri,collected_at,last_run_id,
                variant_id,gtin,seller,product_condition,availability,extraction_method)
-              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+              VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 (SELECT id FROM catalog.product_variants WHERE brand_key=%s AND model_key=%s AND category=%s),
                 %s,%s,%s,%s,%s)
               ON CONFLICT(source_url) DO UPDATE SET
                source_listing_id=EXCLUDED.source_listing_id,
                brand=EXCLUDED.brand,model=EXCLUDED.model,category=EXCLUDED.category,
-               title=EXCLUDED.title,price_usd=EXCLUDED.price_usd,
+               title=EXCLUDED.title,description=EXCLUDED.description,price_usd=EXCLUDED.price_usd,
                currency=EXCLUDED.currency,specifications=EXCLUDED.specifications,
                source_type=EXCLUDED.source_type,raw_object_uri=EXCLUDED.raw_object_uri,
                collected_at=EXCLUDED.collected_at,last_run_id=EXCLUDED.last_run_id,
@@ -126,7 +149,7 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
               WHERE catalog.retailer_listings.collected_at <= EXCLUDED.collected_at'''
             params = [
                 (r['retailer'],r['source_url'],r['source_listing_id'],r['brand'],r['model'],
-                 r['category'],r['title'],r['price_usd'],r['currency'],Jsonb(r['specifications']),
+                 r['category'],r['title'],r['description'],r['price_usd'],r['currency'],Jsonb(r['specifications']),
                  r['source_type'],r['raw_object_uri'],r['collected_at'],manifest['run_id'],
                  r['brand_key'],r['model_key'],r['category'],
                  r['gtin'],r['seller'],r['condition'],r['availability'],r['extraction_method'])
@@ -137,6 +160,8 @@ def load_batch(manifest_uri: str, *, dry_run: bool = False, allow_stale: bool = 
             # no destructive cleanup takes place on failed/zero-record collection.
             if manifest['source_type'] == 'scrape' and normalized:
                 cur.execute("DELETE FROM catalog.retailer_listings WHERE source_type='synthetic'")
+        LOG.info('database committed run_id=%s accepted=%s rejected=%s',
+                 manifest['run_id'], len(normalized), len(rejections))
     return report
 
 
@@ -165,6 +190,8 @@ def latest_completed_uri(bucket_name: str, *, max_age_hours: int = 48) -> str:
 
 
 def main():
+    logging.basicConfig(level=os.getenv('LOG_LEVEL', 'INFO'),
+                        format='%(asctime)s %(levelname)s %(name)s %(message)s')
     p = argparse.ArgumentParser()
     p.add_argument('--manifest-uri', default=os.getenv('MANIFEST_URI'))
     p.add_argument('--latest-completed', action='store_true', help='Recovery only: discover newest recent completed GCS manifest')

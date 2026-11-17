@@ -6,6 +6,8 @@ all-source failure aborts the batch so workflows cannot report false success.
 from __future__ import annotations
 
 import logging
+import time
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -33,6 +35,14 @@ class CatalogCollector:
         self.fetcher = fetcher or HtmlFetcher(**config.get("http", {}))
         self.stats = ScrapeStats()
         self.errors: list[str] = []
+        self.retailer_stats = defaultdict(lambda: {
+            "attempted": 0, "accepted": 0, "failed": 0,
+            "blocked": False, "failure_examples": [],
+        })
+
+    def diagnostics(self) -> dict:
+        """Safe, bounded summary for logs and completed batch manifests."""
+        return {retailer: dict(values) for retailer, values in sorted(self.retailer_stats.items())}
 
     def _candidates(self, retailer: str, settings: dict) -> Iterator[dict]:
         adapter = ADAPTERS[retailer]
@@ -72,9 +82,14 @@ class CatalogCollector:
     def _fail(self, retailer: str, url: str, reason: Exception):
         self.stats.failed += 1
         # No API keys, cookies, query strings or raw HTML in logs.
-        message = f"{retailer}: {url.split('?')[0]}: {reason}"
+        message = f"{retailer}: {url.split('?')[0]}: {str(reason).split('?')[0][:240]}"
         self.errors.append(message)
-        LOG.warning("collector skipped product: %s", message)
+        entry = self.retailer_stats[retailer]
+        entry["failed"] += 1
+        if len(entry["failure_examples"]) < 3:
+            entry["failure_examples"].append(message)
+        LOG.warning("product rejected retailer=%s url=%s reason=%s",
+                    retailer, url.split('?')[0], str(reason).split('?')[0])
 
     def records(self) -> Iterator[dict]:
         """Round-robin retailers so a small run still has cross-store overlap."""
@@ -87,6 +102,10 @@ class CatalogCollector:
             if retailer not in ADAPTERS:
                 raise ValueError(f"no adapter for enabled retailer {retailer!r}")
             active.append((retailer, iter(self._candidates(retailer, settings))))
+            self.retailer_stats[retailer]
+        LOG.info("collector started retailers=%s max_records=%s discovery_mode=%s",
+                 [key for key, _ in active], self.max_records,
+                 self.config.get("discovery_mode", "seeds"))
         while active and self.stats.accepted < self.max_records:
             next_round = []
             for retailer, candidates in active:
@@ -98,20 +117,38 @@ class CatalogCollector:
                     continue
                 adapter = ADAPTERS[retailer]
                 self.stats.attempted += 1
+                self.retailer_stats[retailer]["attempted"] += 1
+                started = time.monotonic()
+                LOG.info("fetching retailer=%s category=%s expected_model=%s url=%s",
+                         retailer, seed["category"], seed.get("model", "unspecified"),
+                         seed["url"].split('?')[0])
                 try:
                     html = self.fetcher.get(seed["url"], allowed_hosts=set(adapter.hosts))
+                    LOG.info("fetched retailer=%s html_chars=%s elapsed_ms=%d",
+                             retailer, len(html), int((time.monotonic() - started) * 1000))
                     record = extract_product(
                         html, seed["url"], adapter, seed["category"],
                         expected_model=seed.get("model"), expected_brand=seed.get("brand"),
                     )
                     self.stats.accepted += 1
+                    self.retailer_stats[retailer]["accepted"] += 1
+                    LOG.info("accepted retailer=%s brand=%s model=%s price_present=%s method=%s progress=%s/%s",
+                             retailer, record["brand"], record["model"], record.get("price") is not None,
+                             record.get("extraction_method"), self.stats.accepted, self.max_records)
                     yield record
                 except AccessError as exc:
                     self._fail(retailer, seed["url"], exc)
                     # An explicit denial or rate limit stops attempts for this retailer.
-                    if any(token in str(exc).lower() for token in ("401", "403", "429", "robots.txt disallows")):
+                    if any(token in str(exc).lower() for token in
+                           ("401", "403", "429", "robots.txt disallows", "robots policy unavailable",
+                            "unable to check robots policy")):
+                        self.retailer_stats[retailer]["blocked"] = True
+                        LOG.warning("retailer paused after access/policy denial retailer=%s", retailer)
                         continue
                 except (ExtractionError, ValueError) as exc:
                     self._fail(retailer, seed["url"], exc)
                 next_round.append((retailer, candidates))
             active = next_round
+        LOG.info("collector finished accepted=%s attempted=%s failed=%s discovered=%s per_retailer=%s",
+                 self.stats.accepted, self.stats.attempted, self.stats.failed,
+                 self.stats.discovered, self.diagnostics())

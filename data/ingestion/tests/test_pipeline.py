@@ -32,6 +32,13 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(row["availability"], "instock")
         self.assertEqual(row["source_type"], "scrape")
 
+    def test_description_jsonld_is_source_evidence(self):
+        url = SAMPLE_URLS["abt"]
+        html = page(TV_MODEL)
+        data = extract_product(html, url, ADAPTERS["abt"], "television", expected_model=TV_MODEL)
+        self.assertIn("Offline fixture product description", normalize_listing(data)["description"])
+        self.assertEqual(normalize_listing({**data, "description": None})["description"], None)
+
     def test_html_fallback_dishwasher(self):
         url = "https://www.homedepot.com/p/325917499"
         item = extract_product(page(DISH_MODEL, brand="GE", category="dishwasher",
@@ -104,6 +111,18 @@ class PipelineTests(unittest.TestCase):
             content = gzip.decompress(raw.read_bytes()).decode().splitlines()
             self.assertEqual(len(content), 2)
             self.assertTrue(all(json.loads(v)["source_type"] == "scrape" for v in content))
+
+    def test_manifest_diagnostics_and_local_namespace(self):
+        with tempfile.TemporaryDirectory() as root:
+            manifest_path = Path(run("scrape", "offline-diagnostic", output_dir=root,
+                                     namespace="local-test", max_records=3,
+                                     config=offline_config(), fetcher=OfflineFetcher(offline_pages())))
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual(manifest["namespace"], "local-test")
+            self.assertEqual(manifest["diagnostics"]["retailers"]["abt"]["accepted"], 1)
+            self.assertEqual(sum(r["accepted"] for r in manifest["diagnostics"]["retailers"].values()), 3)
+            self.assertEqual(load_batch(str(manifest_path), dry_run=True)["accepted"], 3)
+            self.assertTrue(manifest_path.as_posix().endswith('/local-test/manifests/offline-diagnostic.json'))
 
     def test_end_to_end_three_real_model_observations(self):
         with tempfile.TemporaryDirectory() as root:

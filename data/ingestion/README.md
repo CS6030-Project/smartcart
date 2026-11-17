@@ -53,3 +53,76 @@ Seed collection is deliberately focused on verified model numbers. Category disc
 - `catalog.product_variants` is grouped by normalized brand/model/category; `catalog.retailer_listings` preserves distinct seller/retailer offers. Matching decisions belong in the Spring Boot service.
 
 See [scraping architecture](../../docs/scraping.md) and [data contract](../../docs/data-contract.md).
+
+## Local development against the existing Docker Postgres
+
+The repository root already has `compose.yaml` with a persistent `postgres_data` volume.
+Run the **same collector and loader code as Cloud Run** without redeploying:
+
+```bash
+cd <your-smartcart-repo>
+cp .env.example .env  # only if .env is missing; enter local credentials
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r data/ingestion/requirements.txt
+bash data/ingestion/scripts/local_ingest.sh abt,homedepot,bestbuy 9
+```
+
+This calls `docker compose up -d --wait postgres` (reuses the existing volume),
+scrapes **live** retailer pages into `.local/ingestion/`, verifies the manifest,
+then upserts into **local PostgreSQL**. It does not write to GCP. An existing volume
+retains its original password even if you edit `.env`; use the credentials that
+correspond to that volume. Never run `docker compose down -v` to fix authentication.
+
+For a quick deterministic offline test (no live websites or GCP):
+
+```bash
+cd data/ingestion
+python -m unittest discover -s tests -v
+python -m tests.create_offline_batch --output-dir /tmp/smartcart-ci
+python -m loader.main --manifest-uri /tmp/smartcart-ci/manifests/ci-offline-batch.json --dry-run
+```
+
+Inspect locally in IntelliJ's database window, DBeaver, pgAdmin or `psql`:
+
+```sql
+SELECT retailer, COUNT(*) FROM catalog.retailer_listings GROUP BY retailer;
+SELECT * FROM catalog.api_product_offers ORDER BY collected_at DESC LIMIT 15;
+SELECT run_id, accepted_count, rejected_count, diagnostics
+  FROM catalog.ingestion_runs ORDER BY finished_at DESC LIMIT 5;
+```
+
+### Optional isolated Cloud Storage staging (not required for local tests)
+
+For authorized GCP users who already have application-default credentials and
+object-write permissions, run the same collector with `--bucket` instead of
+`--output-dir`, plus `--namespace local-test`:
+
+```bash
+cd data/ingestion
+python -m collector.main --source scrape --max-records 3 --retailers abt \
+  --bucket smartcart-cs6030-smartcart-raw --namespace local-test
+```
+
+This writes only under `gs://.../local-test/raw/` and
+`gs://.../local-test/manifests/`, not production manifests. You can pass the
+resulting manifest URI to the same loader with `--dry-run`; loading into local
+PostgreSQL still requires **local** DB credentials. Cloud Storage billing and
+permissions still apply; local disk is the preferred default.
+
+### See the actual collector logs in GCP
+
+Google Cloud Console → **Cloud Run → Jobs → smartcart-collector → Executions → Logs**.
+In Logs Explorer (not the Cloud Run API service logs), use:
+
+```text
+resource.type="cloud_run_job"
+resource.labels.job_name="smartcart-collector"
+resource.labels.location="us-central1"
+```
+
+Filter to the run's execution time. New code emits attempted URLs, elapsed time,
+acceptance/rejection reasons, per-retailer totals and a manifest diagnostic
+summary. `catalog.ingestion_runs.diagnostics` preserves bounded reason examples.
+A green Workflow with only Abt rows is **partial retailer coverage**, not proof
+that Best Buy/Home Depot worked. Do not bypass robots rules, 403, 429, or CAPTCHAs.

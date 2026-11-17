@@ -17,6 +17,7 @@ def page(model: str, *, brand="LG", category="television", price="999.99", sku="
         "@context": "https://schema.org", "@type": "Product", "name": label,
         "brand": {"@type": "Brand", "name": brand},
         "model": ("OLED65C6PUA" if mismatch else model), "sku": sku,
+        "description": f"Offline fixture product description for {model} (not live retail data)",
         "offers": {"@type": "Offer", "price": price, "priceCurrency": "USD",
                    "availability": "https://schema.org/InStock"},
     }

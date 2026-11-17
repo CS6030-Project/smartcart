@@ -1,0 +1,45 @@
+# Executed by Google Workflows. No second timer and no 'latest file' guessing.
+# Terraform replaces __PROJECT_ID__, __REGION__, __RAW_BUCKET__ placeholders.
+main:
+  params: [args]
+  steps:
+    - initialize:
+        assign:
+          - project_id: __PROJECT_ID__
+          - region: __REGION__
+          - bucket: __RAW_BUCKET__
+          - run_id: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+          - manifest_uri: ${"gs://" + bucket + "/manifests/" + run_id + ".json"}
+    - run_collector:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/smartcart-collector"}
+          body:
+            overrides:
+              containerOverrides:
+                - name: collector
+                  env:
+                    - name: RUN_ID
+                      value: ${run_id}
+          connector_params:
+            timeout: 3600
+        result: collect_execution
+
+    - run_loader:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + project_id + "/locations/" + region + "/jobs/smartcart-loader"}
+          body:
+            overrides:
+              containerOverrides:
+                - name: loader
+                  env:
+                    - name: MANIFEST_URI
+                      value: ${manifest_uri}
+        result: load_execution
+    - done:
+        return:
+          run_id: ${run_id}
+          manifest_uri: ${manifest_uri}
+          collector: ${collect_execution}
+          loader: ${load_execution}

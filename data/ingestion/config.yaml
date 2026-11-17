@@ -1,0 +1,41 @@
+# The same collector runs locally and in Cloud Run; CLI/env controls run size.
+collector:
+  source: scrape
+  max_records: 25
+  # "seeds" uses known product pages. "category" also discovers products from
+  # configured category URLs and next-page links, bounded by the limits below.
+  discovery_mode: seeds
+  max_pages_per_category: 2
+  http:
+    delay_seconds: 2.0
+    timeout_seconds: 15
+    respect_robots: true
+    max_html_bytes: 3000000
+  retailers:
+    bestbuy:
+      enabled: true
+      products:
+        - {category: television, brand: LG, model: OLED55C6PUA, url: 'https://www.bestbuy.com/product/lg-55-class-c6-oled-evo-ai-4k-smart-webos-tv-with-perfect-black-perfect-color-and-brightness-booster-2026/6673121'}
+        - {category: television, brand: LG, model: OLED65C6PUA, url: 'https://www.bestbuy.com/product/lg-65-class-c6-oled-evo-ai-4k-smart-webos-tv-with-perfect-black-perfect-color-and-brightness-booster-2026/6673112'}
+        - {category: dishwasher, brand: GE, model: GDT650SYVFS, url: 'https://www.bestbuy.com/product/ge-24-top-control-built-in-stainless-steel-tub-dishwasher-with-3rd-rack-sanitize-cycle-and-47-dba-stainless-steel/J7645SG674/sku/6549423'}
+      category_urls: {}
+    homedepot:
+      enabled: true
+      products:
+        - {category: television, brand: LG, model: OLED55C6PUA, url: 'https://www.homedepot.com/p/341947263'}
+        - {category: dishwasher, brand: GE, model: GDT650SYVFS, url: 'https://www.homedepot.com/p/325917499'}
+        - {category: dishwasher, brand: GE, model: GDT650SMVES, url: 'https://www.homedepot.com/p/325917515'}
+      category_urls:
+        television: ['https://www.homedepot.com/b/Electronics-TV-Home-Theater/LG-Electronics/N-5yc1vZc64jZ21j']
+        dishwasher: ['https://www.homedepot.com/b/Appliances-Dishwashers-Built-In-Dishwashers/GE/N-5yc1vZc3njZlo']
+    abt:
+      enabled: true
+      products:
+        - {category: television, brand: LG, model: OLED55C6PUA, url: 'https://www.abt.com/LG-OLED-evo-AI-C6-4K-55-Inch-Smart-TV-OLED55C6PUA/p/240656.html'}
+        - {category: television, brand: LG, model: OLED65C6PUA, url: 'https://www.abt.com/LG-OLED-evo-AI-C6-4K-65-Inch-Smart-TV-OLED65C6PUA/p/240655.html'}
+        - {category: dishwasher, brand: GE, model: GDT650SYVFS, url: 'https://www.abt.com/GE-24-Inch-Top-Control-Dishwasher-With-Sanitize-Cycle-In-Fingerprint-Resistant-Stainless-Steel-GDT650SYVFS/p/196627.html'}
+      category_urls:
+        television: ['https://www.abt.com/OLED-TVs/c/2282.html']
+        dishwasher: []
+loader:
+  max_age_hours: 48

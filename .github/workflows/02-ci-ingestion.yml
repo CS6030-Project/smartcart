@@ -1,0 +1,72 @@
+name: "02 · CI / Ingestion"
+
+on:
+  pull_request:
+    paths:
+      - 'data/ingestion/**'
+      - '.github/workflows/02-ci-ingestion.yml'
+      - '.github/workflows/10-cd-ingestion.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'data/ingestion/**'
+      - '.github/workflows/02-ci-ingestion.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Python, parsing and Docker builds
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: smartcart
+          POSTGRES_USER: smartcart
+          POSTGRES_PASSWORD: integration-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U smartcart -d smartcart"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '5432'
+      DB_NAME: smartcart
+      DB_USER: smartcart
+      DB_PASSWORD: integration-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r data/ingestion/requirements.txt
+      - name: Test extraction and manifest validation without external requests
+        working-directory: data/ingestion
+        run: python -m unittest discover -s tests -v
+      - name: Verify new PostgreSQL schema, descriptions and API view without GCP
+        working-directory: data/ingestion
+        run: |
+          python -m tests.create_offline_batch --output-dir /tmp/smartcart-pr-ci
+          python -m loader.main --manifest-uri /tmp/smartcart-pr-ci/manifests/ci-offline-batch.json
+          python - <<'PYSQL'
+          import psycopg
+          with psycopg.connect(host='127.0.0.1', dbname='smartcart',
+                               user='smartcart', password='integration-only') as conn:
+              with conn.cursor() as cur:
+                  cur.execute('SELECT count(*), count(description) FROM catalog.api_product_offers')
+                  count, described = cur.fetchone()
+                  assert (count, described) == (3, 3), (count, described)
+                  cur.execute('SELECT diagnostics FROM catalog.ingestion_runs LIMIT 1')
+                  assert cur.fetchone()[0]['retailers']['abt']['accepted'] == 1
+          print('PostgreSQL schema, API view, description, diagnostics all verified')
+          PYSQL
+      - name: Build isolated worker images
+        run: |
+          docker build -f data/ingestion/Dockerfile.collector data/ingestion
+          docker build -f data/ingestion/Dockerfile.loader data/ingestion

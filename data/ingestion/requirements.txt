@@ -1,0 +1,3 @@
+# Combined developer/test environment. Deployed images use worker-specific files.
+-r requirements.collector.txt
+-r requirements.loader.txt

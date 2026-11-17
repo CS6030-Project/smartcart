@@ -1,0 +1,28 @@
+name: "03 · CI / Terraform"
+on:
+  pull_request:
+    paths:
+      - "cloud/terraform/**"
+      - "cloud/workflows/**"
+      - ".github/workflows/03-ci-terraform.yml"
+      - ".github/workflows/20-ops-terraform.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud/terraform/dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.17.2"
+      - name: Format
+        run: terraform fmt -check -recursive
+      - name: Initialize without accessing GCP or remote state
+        run: terraform init -backend=false -input=false
+      - name: Validate
+        run: terraform validate -no-color

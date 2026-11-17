@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -27,21 +28,27 @@ LOG = logging.getLogger(__name__)
 def run(source: str, run_id: str, *, bucket_name: str | None = None,
         output_dir: str | None = None, max_records: int = 25,
         config: dict | None = None, retailer_filter: set[str] | None = None,
-        fetcher=None) -> str:
+        fetcher=None, namespace: str | None = None) -> str:
     if source != "scrape":
         raise ValueError("only real scraping source is supported")
     if not run_id or not all(ch.isalnum() or ch in "-_" for ch in run_id):
         raise ValueError("run_id must contain only letters, numbers, hyphens or underscores")
     max_records = positive_int(max_records, "max_records")
+    if namespace and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", namespace):
+        raise ValueError("namespace must contain only lowercase letters, digits, underscores or hyphens")
     if bool(bucket_name) == bool(output_dir):
         raise ValueError("provide exactly one of bucket_name or output_dir")
     col_config = config or load_config()["collector"]
     collector = CatalogCollector(col_config, retailer_filter=retailer_filter,
                                  max_records=max_records, fetcher=fetcher)
     now = datetime.now(timezone.utc)
-    prefix = f"raw/{now:%Y-%m-%d}/{run_id}"
+    scope = f"{namespace}/" if namespace else ""
+    prefix = f"{scope}raw/{now:%Y-%m-%d}/{run_id}"
     raw_path = f"{prefix}/scrape.jsonl.gz"
-    manifest_path = f"manifests/{run_id}.json"
+    manifest_path = f"{scope}manifests/{run_id}.json"
+    LOG.info("ingestion start run_id=%s target=%s namespace=%s max_records=%s",
+             run_id, "gs://" + bucket_name if bucket_name else str(output_dir),
+             namespace or "default", max_records)
 
     # Spool a compressed batch on disk instead of materializing every row in RAM.
     with tempfile.TemporaryDirectory(prefix="smartcart-collector-") as temp:
@@ -61,6 +68,9 @@ def run(source: str, run_id: str, *, bucket_name: str | None = None,
                     accepted += 1
                     if checked["price_usd"] is not None:
                         priced += 1
+        LOG.info("collection summary run_id=%s accepted=%s priced=%s attempted=%s failed=%s per_retailer=%s",
+                 run_id, accepted, priced, collector.stats.attempted,
+                 collector.stats.failed, collector.diagnostics())
         if accepted == 0:
             detail = "; ".join(collector.errors[:3]) or "no products were discovered"
             raise RuntimeError(f"zero valid real products; batch not published: {detail}")
@@ -76,6 +86,9 @@ def run(source: str, run_id: str, *, bucket_name: str | None = None,
             "attempted": collector.stats.attempted,
             "failed": collector.stats.failed,
             "discovered": collector.stats.discovered,
+            "namespace": namespace,
+            "diagnostics": {"retailers": collector.diagnostics(),
+                            "error_examples": collector.errors[:9]},
             "files": [{"path": raw_path, "sha256": digest.hexdigest(), "records": accepted}],
         }
         manifest_bytes = json.dumps(manifest, indent=2).encode()
@@ -112,7 +125,11 @@ def main() -> None:
     p.add_argument("--run-id", default=os.getenv("RUN_ID") or f"manual-{uuid4().hex[:12]}")
     p.add_argument("--bucket", default=os.getenv("RAW_BUCKET"))
     p.add_argument("--output-dir")
+    p.add_argument("--namespace", help="Optional isolated raw/manifest prefix, e.g. local-test")
+    p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING"),
+                   default=os.getenv("LOG_LEVEL", "INFO").upper())
     args = p.parse_args()
+    logging.getLogger().setLevel(args.log_level)
     cfg = load_config(args.config)["collector"]
     source = args.source or os.getenv("SOURCE_MODE") or cfg["source"]
     size = args.max_records if args.max_records is not None else os.getenv("MAX_RECORDS", cfg["max_records"])
@@ -125,7 +142,7 @@ def main() -> None:
     subset = set(x.strip() for x in filter_str.split(",") if x.strip()) if filter_str else None
     uri = run(source, args.run_id, bucket_name=args.bucket,
               output_dir=args.output_dir, max_records=int(size), config=cfg,
-              retailer_filter=subset)
+              retailer_filter=subset, namespace=args.namespace)
     print(json.dumps({"manifest_uri": uri, "source": source, "max_records": int(size)}))
 
 

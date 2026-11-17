@@ -128,6 +128,14 @@ def extract_product(html: str, url: str, adapter: RetailerAdapter, category: str
     title = (_text(product.get("name")) or _meta(soup, "og:title", "twitter:title") or
              (soup.h1.get_text(" ", strip=True) if soup.h1 else None))
     body = soup.get_text(" ", strip=True)
+    description = (_text(product.get("description")) or
+                   _meta(soup, "description", "og:description", "twitter:description"))
+    if description:
+        # Descriptions can contain HTML markup or nonbreaking/duplicated whitespace.
+        description = re.sub(r"\s+", " ", BeautifulSoup(description, "html.parser")
+                             .get_text(" ", strip=True)).strip()[:4000] or None
+        if description and description.casefold() == (title or "").casefold():
+            description = None
     brand = _text(product.get("brand")) or _meta(soup, "product:brand", "brand")
     if not brand and expected_brand and re.search(r"\b" + re.escape(expected_brand) + r"\b", (title or "") + " " + body[:1500], re.I):
         brand = expected_brand
@@ -169,6 +177,30 @@ def extract_product(html: str, url: str, adapter: RetailerAdapter, category: str
     if gtin and (not gtin.isdigit() or not 8 <= len(gtin) <= 14):
         gtin = None
     specs = _extract_size(title, category)
+    if description:
+        for key, value in _extract_size(description, category).items():
+            specs.setdefault(key, value)
+    # Normalized structured properties where semantics are sufficiently explicit.
+    extra = product.get("additionalProperty") or []
+    if isinstance(extra, dict):
+        extra = [extra]
+    for item in extra if isinstance(extra, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key = (_text(item.get("name")) or "").casefold().strip()
+        value = _text(item.get("value"))
+        if not value:
+            continue
+        if key in ("color", "finish", "finish color"):
+            specs.setdefault("finish", value[:100])
+        elif category == "television" and key in ("display technology", "display type"):
+            specs.setdefault("displayType", value[:80])
+        elif category == "television" and key in ("resolution", "display resolution"):
+            specs.setdefault("resolution", value[:80])
+        elif category == "dishwasher" and key in ("noise level", "noise rating"):
+            match = re.search(r"(\d{2})\s*(?:dba|db)?", value, re.I)
+            if match and 35 <= int(match.group(1)) <= 70:
+                specs.setdefault("noiseDb", int(match.group(1)))
     for key, dest in (("color", "finish"), ("size", "size")):
         val = _text(product.get(key))
         if val and dest not in specs:
@@ -189,6 +221,7 @@ def extract_product(html: str, url: str, adapter: RetailerAdapter, category: str
         "model": model,
         "category": category,
         "title": title,
+        "description": description,
         "price": price,
         "currency": currency.upper(),
         "gtin": gtin,

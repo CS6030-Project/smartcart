@@ -55,6 +55,10 @@ def normalize_listing(raw: dict) -> dict:
         raise ValueError("collected_at must be ISO-8601") from exc
     if dt.tzinfo is None:
         raise ValueError("collected_at requires a timezone")
+    description = raw.get("description")
+    if description is not None and not isinstance(description, str):
+        raise ValueError("description must be text or null")
+    description = (description.strip()[:4000] or None) if description is not None else None
     specifications = raw.get("specifications") or {}
     if not isinstance(specifications, dict):
         raise ValueError("specifications must be an object")
@@ -73,6 +77,7 @@ def normalize_listing(raw: dict) -> dict:
         "source_url": raw["source_url"].strip(),
         "source_listing_id": str(raw.get("source_listing_id") or "").strip() or None,
         "title": raw["title"].strip(),
+        "description": description,
         "brand": raw["brand"].strip(),
         "model": raw["model"].strip(),
         "model_key": model_key(raw["model"]),
